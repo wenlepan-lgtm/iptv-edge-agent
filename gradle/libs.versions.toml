@@ -1,0 +1,15 @@
+[versions]
+agp = "8.13.2"
+kotlin = "1.9.0"
+coreKtx = "1.13.1"
+leanback = "1.0.0"
+lifecycleRuntimeKtx = "2.8.2"
+
+[libraries]
+core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+leanback = { group = "androidx.leanback", name = "leanback", version.ref = "leanback" }
+lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

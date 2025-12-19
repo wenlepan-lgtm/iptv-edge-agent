@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@android:color/black"
+    android:padding="16dp">
+
+    <!-- 系统监控参数显示区域 -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- AUDIO 行 -->
+            <TextView
+                android:id="@+id/tvAudioInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="AUDIO: deviceType=USB, productName=, deviceId="
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- REC 行 -->
+            <TextView
+                android:id="@+id/tvRecInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="REC: sampleRate=16000, channels=8, encoding=PCM_16BIT"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- READ 行 -->
+            <TextView
+                android:id="@+id/tvReadInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="READ: frames=0, rms(dBFS)=-∞, peak(dBFS)=-∞, zeroRate=0%"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- VOSK 行 -->
+            <TextView
+                android:id="@+id/tvVoskInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="VOSK: partial=, final="
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- SYS 行 -->
+            <TextView
+                android:id="@+id/tvSysInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="SYS: appCpu%=0%, memPssMB=0"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- CPU 行 -->
+            <TextView
+                android:id="@+id/tvCpuInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="CPU: usage=0%"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- GPU 行 -->
+            <TextView
+                android:id="@+id/tvGpuInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="GPU: usage=0%"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- NUP 行 -->
+            <TextView
+                android:id="@+id/tvNupInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="NUP: packets=0"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- MEM 行 -->
+            <TextView
+                android:id="@+id/tvMemInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="MEM: usage=0MB"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- DISK 行 -->
+            <TextView
+                android:id="@+id/tvDiskInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="DISK: usage=0GB"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- NET 行 -->
+            <TextView
+                android:id="@+id/tvNetInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="NET(wlan0): rx=0KB/s, tx=0KB/s"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+
+            <!-- 错误信息行 -->
+            <TextView
+                android:id="@+id/tvErrorInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="ERROR: None"
+                android:textColor="#FF0000"
+                android:textSize="14sp"
+                android:typeface="monospace"
+                android:layout_marginBottom="4dp"/>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- 操作按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/btnStart"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Start"
+            android:textColor="#FFFFFF"
+            android:background="#333333"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Stop"
+            android:textColor="#FFFFFF"
+            android:background="#333333"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnClear"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Clear"
+            android:textColor="#FFFFFF"
+            android:background="#333333"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnSaveLog"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Save Log"
+            android:textColor="#FFFFFF"
+            android:background="#333333"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Back"
+            android:textColor="#FFFFFF"
+            android:background="#333333"/>
+    </LinearLayout>
+</LinearLayout>
