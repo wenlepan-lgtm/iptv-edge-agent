@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.androidtvspeechrecognition"
+    namespace = "com.joctv.agent"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.androidtvspeechrecognition"
+        applicationId = "com.joctv.agent"
         minSdk = 29
         targetSdk = 34
         versionCode = 1
