@@ -131,6 +131,36 @@
             android:textColor="#FFA500"
             android:textSize="14sp"
             android:typeface="monospace" />
+        
+        <!-- VAD 信息 -->
+        <TextView
+            android:id="@+id/tvVadInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="VAD: RMS=0.0, Threshold=0.0"
+            android:textColor="#00FFFF"
+            android:textSize="12sp"
+            android:typeface="monospace" />
+        
+        <!-- 倒计时信息 -->
+        <TextView
+            android:id="@+id/tvCountdown"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Countdown: 0s"
+            android:textColor="#FFFF00"
+            android:textSize="12sp"
+            android:typeface="monospace" />
+        
+        <!-- 唤醒词命中次数 -->
+        <TextView
+            android:id="@+id/tvWakewordHits"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Wakeword Hits: 0"
+            android:textColor="#FF00FF"
+            android:textSize="12sp"
+            android:typeface="monospace" />
 
         <TextView
             android:id="@+id/tvModel"
@@ -140,6 +170,17 @@
             android:textColor="#888888"
             android:textSize="12sp"
             android:typeface="monospace" />
+
+        <!-- 暂停录音按钮 -->
+        <Button
+            android:id="@+id/btnPauseResume"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Pause Recording"
+            android:textColor="#FFFFFF"
+            android:background="#FF5722"
+            android:layout_marginTop="12dp"
+            android:padding="12dp" />
 
     </LinearLayout>
 </LinearLayout>
