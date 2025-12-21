@@ -23,10 +23,15 @@ class AsrController(
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val BUFFER_SIZE = 1600 // 100ms buffer
-        private const val WARMUP_DURATION_MS = 500L // Warmup duration in ms
-        private const val NOISE_SAMPLING_DURATION_MS = 1000L // Noise sampling duration in ms
-        private const val SILENCE_DURATION_MS = 800L // Silence duration for finalize
-        private const val MIN_VAD_RMS = 120.0 // Minimum VAD RMS threshold
+        private const val MIN_VAD_RMS = 120.0
+        private const val SILENCE_DURATION_MS = 800L
+        private const val COOLDOWN_MS = 800L
+        private const val PARTIAL_THROTTLE_MS = 200L
+    }
+
+    // ASR 状态机枚举
+    enum class AsrState {
+        IDLE, LISTENING, FINAL, COOLDOWN
     }
 
     private var isRunning = false
@@ -34,11 +39,37 @@ class AsrController(
     
     private val buffer = ShortArray(BUFFER_SIZE)
     private var currentRecognizer: Recognizer? = null
+    private var currentState = AsrState.IDLE
+    private var lastPartial = ""
+    private var lastPartialCallbackTime = 0L
+    private var lastVoiceTime = 0L
+    private var isInSpeech = false
+    private var cooldownEndTime = 0L
+    private var callbacksEnabled = true
+    private var sessionId = 0
+    private var partialEmitCount = 0
+    private var finalEmitCount = 0
+    private var voiceStartTime = 0L
+    private var inVoiceSession = false
 
     fun startContinuousAsr() {
         stopContinuousAsr() // Stop any existing recording
         
         isRunning = true
+        currentState = AsrState.LISTENING
+        lastPartial = ""
+        lastPartialCallbackTime = 0L
+        lastVoiceTime = System.currentTimeMillis()
+        isInSpeech = false
+        cooldownEndTime = 0L
+        callbacksEnabled = true
+        sessionId++
+        partialEmitCount = 0
+        finalEmitCount = 0
+        inVoiceSession = false
+        
+        Log.d("ASR", "ASR_STATE=LISTENING")
+        Log.d("ASR", "ASR_SESSION=$sessionId START")
         
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         val bufferSize = BUFFER_SIZE * 2 // Double buffer size for safety
@@ -121,165 +152,24 @@ class AsrController(
                 // Reset recognizer at start
                 resetRecognizer()
                 
-                // Warmup phase - discard first 500ms of audio
-                val warmupEndTime = System.currentTimeMillis() + WARMUP_DURATION_MS
-                while (isRunning && System.currentTimeMillis() < warmupEndTime) {
-                    val read = localRecord.read(buffer, 0, buffer.size)
-                    // Discard audio during warmup
-                }
-                Log.i("AudioRecord", "Warmup completed, discarded first ${WARMUP_DURATION_MS}ms")
-                
-                // Noise sampling phase - sample for 1 second to calculate noise floor
-                var noiseSum = 0.0
-                var noiseSampleCount = 0
-                val noiseSamplingEndTime = System.currentTimeMillis() + NOISE_SAMPLING_DURATION_MS
-                while (isRunning && System.currentTimeMillis() < noiseSamplingEndTime) {
-                    val read = localRecord.read(buffer, 0, buffer.size)
-                    
-                    // Calculate RMS for noise sampling
-                    if (read > 0) {
-                        var sum = 0.0
-                        for (i in 0 until read) {
-                            val sample = buffer[i].toInt()
-                            sum += sample * sample
-                        }
-                        val rms = sqrt(sum / read)
-                        noiseSum += rms
-                        noiseSampleCount++
-                    }
-                }
-                
-                // Calculate noise RMS and VAD threshold
-                val noiseRms = if (noiseSampleCount > 0) noiseSum / noiseSampleCount else 0.0
-                val vadRms = kotlin.math.max(noiseRms * 3, MIN_VAD_RMS)
-                Log.i("AudioRecord", "Noise sampling completed: noiseRms=$noiseRms, vadRms=$vadRms")
-                
-                // Main processing loop
-                var lastVoiceTime = System.currentTimeMillis()
-                var isInSpeech = false
-                var lastPartial = ""
-                
                 while (isRunning) {
                     val read = localRecord.read(buffer, 0, buffer.size)
                     
-                    // Calculate RMS and peak for logging
+                    // Calculate RMS for logging
                     var sum = 0.0
-                    var peak = 0
                     if (read > 0) {
                         for (i in 0 until read) {
                             val sample = buffer[i].toInt()
                             sum += sample * sample
-                            if (Math.abs(sample) > peak) {
-                                peak = Math.abs(sample)
-                            }
                         }
                     }
                     val rms = if (read > 0) sqrt(sum / read) else 0.0
                     
-                    // Log AudioRecord read result
-                    Log.i("AudioRecord", "read=$read rms=$rms peak=$peak")
+                    // Log RMS and inSpeech state
+                    Log.d("ASR", "RMS=$rms inSpeech=$isInSpeech")
                     
-                    // Check for voice activity using dynamic threshold
-                    val wasInSpeech = isInSpeech
-                    isInSpeech = rms >= vadRms
-                    
-                    // Check for silence timeout - only trigger when transitioning from speech to silence
-                    val currentTime = System.currentTimeMillis()
-                    if (wasInSpeech && !isInSpeech && currentTime - lastVoiceTime >= SILENCE_DURATION_MS) {
-                        // Get final result when silence detected after speech
-                        val recognizer = currentRecognizer
-                        if (recognizer != null) {
-                            val finalResult = recognizer.finalResult
-                            if (finalResult.isNotBlank()) {
-                                Log.d("ASR", "final=$finalResult")
-                                try {
-                                    val jsonObj = JSONObject(finalResult)
-                                    if (jsonObj.has("text")) {
-                                        val text = jsonObj.optString("text", "")
-                                        if (text.isNotEmpty()) {
-                                            Log.d("ASR", "final_text=$text")
-                                            listener.onAsrResult(text, true)
-                                            // Clear lastPartial after final result
-                                            lastPartial = ""
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error parsing final result", e)
-                                }
-                            }
-                        }
-                        
-                        // Reset recognizer for next utterance
-                        resetRecognizer()
-                        // Reset speech state to prevent repeated triggering
-                        isInSpeech = false
-                        
-                        // Reset lastVoiceTime to prevent continuous firing
-                        lastVoiceTime = currentTime
-                    }
-                    
-                    // Update last voice time if in speech
-                    if (isInSpeech) {
-                        lastVoiceTime = currentTime
-                    }
-                    
-                    // Skip processing if no data read
-                    if (read <= 0) {
-                        continue
-                    }
-                    
-                    // Convert ShortArray to ByteArray for Vosk
-                    val byteArray = ShortArrayToByteArray(buffer, read)
-                    
-                    // Get current recognizer
-                    val recognizer = currentRecognizer
-                    if (recognizer == null) {
-                        continue
-                    }
-                    
-                    // Call acceptWaveForm with proper Boolean return value
-                    val ok: Boolean = recognizer.acceptWaveForm(byteArray, byteArray.size)
-                    // Get result or partialResult based on ok value
-                    val json = if (ok) {
-                        recognizer.result ?: ""
-                    } else {
-                        recognizer.partialResult ?: ""
-                    }
-                    
-                    // Log Recognizer result
-                    Log.d("ASR", "ok=$ok json=$json")
-                    
-                    // Process result only if json is not blank
-                    if (json.isNotBlank()) {
-                        try {
-                            val jsonObj = JSONObject(json)
-                            
-                            // Parse partial result
-                            if (jsonObj.has("partial")) {
-                                val partial = jsonObj.optString("partial", "")
-                                // Only callback if partial is not empty and has changed
-                                if (partial.isNotEmpty() && partial != lastPartial) {
-                                    Log.d("ASR", "partial=$partial")
-                                    listener.onAsrResult(partial, false)
-                                    lastPartial = partial
-                                }
-                                // Skip logging empty partial results
-                            }
-                            
-                            // Handle final result
-                            if (jsonObj.has("text")) {
-                                val text = jsonObj.optString("text", "")
-                                if (text.isNotEmpty()) {
-                                    Log.d("ASR", "final_text=$text")
-                                    listener.onAsrResult(text, true)
-                                    // Clear lastPartial after final result
-                                    lastPartial = ""
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing JSON result", e)
-                        }
-                    }
+                    // State machine processing
+                    processStateMachine(localRecord, rms, read)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error in recording thread", e)
@@ -313,6 +203,7 @@ class AsrController(
     fun stopContinuousAsr() {
         isRunning = false
         recordingThread?.interrupt()
+        Log.d("ASR", "ASR_SESSION=$sessionId END partialEmits=$partialEmitCount finalEmits=$finalEmitCount")
     }
 
     private fun resetRecognizer() {
@@ -325,6 +216,199 @@ class AsrController(
         // Create new recognizer
         currentRecognizer = Recognizer(model, SAMPLE_RATE.toFloat())
         Log.d(TAG, "Recognizer reset")
+    }
+
+    /**
+     * ASR 状态机处理函数
+     */
+    private fun processStateMachine(localRecord: AudioRecord, rms: Double, read: Int) {
+        val currentTime = System.currentTimeMillis()
+        
+        when (currentState) {
+            AsrState.LISTENING -> {
+                // 更新语音活动状态
+                val wasInSpeech = isInSpeech
+                isInSpeech = rms >= MIN_VAD_RMS
+                
+                // 检查语音活动开始/结束
+                if (!wasInSpeech && isInSpeech) {
+                    voiceStartTime = currentTime
+                    if (!inVoiceSession) {
+                        inVoiceSession = true
+                        Log.d("ASR", "VOICE_START rms=$rms threshold=$MIN_VAD_RMS")
+                    }
+                } else if (wasInSpeech && !isInSpeech) {
+                    lastVoiceTime = currentTime
+                    if (inVoiceSession) {
+                        inVoiceSession = false
+                        Log.d("ASR", "VOICE_END rms=$rms threshold=$MIN_VAD_RMS")
+                    }
+                }
+                
+                // 检查静音超时
+                if (!isInSpeech && currentTime - lastVoiceTime >= SILENCE_DURATION_MS && inVoiceSession) {
+                    // 触发 final result
+                    val silenceMs = currentTime - lastVoiceTime
+                    Log.d("ASR", "FINAL_TRIGGER reason=silence silenceMs=$silenceMs")
+                    triggerFinalResult()
+                    currentState = AsrState.FINAL
+                    Log.d("ASR", "ASR_STATE=FINAL")
+                } else {
+                    // 处理正常的音频数据
+                    processAudioData(localRecord, read, rms)
+                }
+            }
+            
+            AsrState.FINAL -> {
+                // 进入冷却状态
+                cooldownEndTime = currentTime + COOLDOWN_MS
+                callbacksEnabled = false
+                currentState = AsrState.COOLDOWN
+                Log.d("ASR", "ASR_STATE=COOLDOWN")
+            }
+            
+            AsrState.COOLDOWN -> {
+                // 冷却时间结束后回到监听状态
+                if (currentTime >= cooldownEndTime) {
+                    currentState = AsrState.LISTENING
+                    callbacksEnabled = true
+                    lastVoiceTime = currentTime // 修复：初始化 lastVoiceTime
+                    inVoiceSession = false
+                    Log.d("ASR", "ASR_STATE=LISTENING")
+                }
+                // 在冷却期间仍然处理音频数据，但不触发任何回调
+                processAudioData(localRecord, read, rms)
+            }
+            
+            AsrState.IDLE -> {
+                // 不应该到达这里，但为了完整性
+                currentState = AsrState.LISTENING
+                callbacksEnabled = true
+                lastVoiceTime = currentTime // 修复：初始化 lastVoiceTime
+                Log.d("ASR", "ASR_STATE=LISTENING")
+            }
+        }
+    }
+    
+    /**
+     * 处理音频数据
+     */
+    private fun processAudioData(localRecord: AudioRecord, read: Int, rms: Double) {
+        // Skip processing if no data read
+        if (read <= 0) {
+            return
+        }
+        
+        // Log RMS info
+        Log.d("ASR", "RMS=$rms inSpeech=$isInSpeech threshold=$MIN_VAD_RMS")
+        
+        // Convert ShortArray to ByteArray for Vosk
+        val byteArray = ShortArrayToByteArray(buffer, read)
+        
+        // Get current recognizer
+        val recognizer = currentRecognizer
+        if (recognizer == null) {
+            return
+        }
+        
+        // Call acceptWaveForm with proper Boolean return value
+        val ok: Boolean = recognizer.acceptWaveForm(byteArray, byteArray.size)
+        // Get result or partialResult based on ok value
+        val json = if (ok) {
+            recognizer.result ?: ""
+        } else {
+            recognizer.partialResult ?: ""
+        }
+        
+        // Process result only if json is not blank
+        if (json.isNotBlank()) {
+            try {
+                val jsonObj = JSONObject(json)
+                
+                // Parse partial result
+                if (jsonObj.has("partial")) {
+                    val partial = jsonObj.optString("partial", "")
+                    handlePartialResult(partial)
+                }
+                
+                // Handle final result (should not happen in normal flow)
+                if (jsonObj.has("text")) {
+                    val text = jsonObj.optString("text", "")
+                    if (text.isNotEmpty()) {
+                        Log.d("ASR", "final=$text")
+                        listener.onAsrResult(text, true)
+                        lastPartial = ""
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error parsing JSON result", e)
+            }
+        }
+    }
+    
+    /**
+     * 处理 partial 结果
+     */
+    private fun handlePartialResult(partial: String) {
+        // 在 COOLDOWN 期间禁止任何回调
+        if (!callbacksEnabled) {
+            return
+        }
+        
+        val currentTime = System.currentTimeMillis()
+        
+        // 仅在以下条件成立时才回调 partial：
+        // 1. partial 非空
+        // 2. 与上一次 partial 不相同
+        // 3. 节流控制 ≥ 200ms
+        if (partial.isNotEmpty() && 
+            partial != lastPartial && 
+            currentTime - lastPartialCallbackTime >= PARTIAL_THROTTLE_MS) {
+            
+            partialEmitCount++
+            Log.d("ASR", "PARTIAL_EMIT count=$partialEmitCount text=$partial")
+            Log.d("ASR", "partial=$partial")
+            listener.onAsrResult(partial, false)
+            lastPartial = partial
+            lastPartialCallbackTime = currentTime
+        }
+        // 空字符串 partial 直接忽略，不打印日志
+    }
+    
+    /**
+     * 触发 final 结果
+     */
+    private fun triggerFinalResult() {
+        // 在 COOLDOWN 期间禁止任何回调
+        if (!callbacksEnabled) {
+            return
+        }
+        
+        val recognizer = currentRecognizer
+        if (recognizer != null) {
+            val finalResult = recognizer.finalResult
+            if (finalResult.isNotBlank()) {
+                try {
+                    val jsonObj = JSONObject(finalResult)
+                    if (jsonObj.has("text")) {
+                        val text = jsonObj.optString("text", "")
+                        if (text.isNotEmpty()) {
+                            finalEmitCount++
+                            Log.d("ASR", "FINAL_EMIT count=$finalEmitCount text=$text")
+                            Log.d("ASR", "final=$text")
+                            listener.onAsrResult(text, true)
+                            // 清空 lastPartial
+                            lastPartial = ""
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing final result", e)
+                }
+            }
+        }
+        
+        // 重置识别器
+        resetRecognizer()
     }
 
     private fun ShortArrayToByteArray(shortArray: ShortArray, length: Int): ByteArray {
