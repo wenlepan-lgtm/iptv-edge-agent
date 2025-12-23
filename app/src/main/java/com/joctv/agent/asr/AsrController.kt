@@ -1,8 +1,7 @@
 package com.joctv.agent.asr
 
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
+import android.media.*
+import android.media.audiofx.*
 import android.util.Log
 import org.json.JSONObject
 import org.vosk.Model
@@ -37,6 +36,14 @@ class AsrController(
     private var isRunning = false
     private var recordingThread: Thread? = null
     
+    // 音频效果器
+    private var acousticEchoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var automaticGainControl: AutomaticGainControl? = null
+    
+    // 半双工抑制标志
+    private var asrMuted = false
+    
     private val buffer = ShortArray(BUFFER_SIZE)
     private var currentRecognizer: Recognizer? = null
     private var currentState = AsrState.IDLE
@@ -51,12 +58,15 @@ class AsrController(
     private var finalEmitCount = 0
     private var voiceStartTime = 0L
     private var inVoiceSession = false
+    private var isPaused = false
 
     fun startContinuousAsr() {
         stopContinuousAsr() // Stop any existing recording
         
         isRunning = true
-        currentState = AsrState.LISTENING
+        isPaused = false
+        asrMuted = false // 重置抑制标志
+        currentState = AsrState.IDLE
         lastPartial = ""
         lastPartialCallbackTime = 0L
         lastVoiceTime = System.currentTimeMillis()
@@ -73,57 +83,22 @@ class AsrController(
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         val bufferSize = BUFFER_SIZE * 2 // Double buffer size for safety
 
-        // Try different audio sources in order of preference
-        val audioSources = arrayOf(
-            MediaRecorder.AudioSource.MIC,
-            MediaRecorder.AudioSource.CAMCORDER,
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        // 使用固定的 VOICE_RECOGNITION 音频源
+        val audioSource = MediaRecorder.AudioSource.VOICE_RECOGNITION
+        val localRecord = AudioRecord(
+            audioSource,
+            SAMPLE_RATE,
+            CHANNEL_CONFIG,
+            AUDIO_FORMAT,
+            bufferSize
         )
         
-        var localRecord: AudioRecord? = null
-        var selectedAudioSource = -1
-        
-        // Try each audio source until one works
-        for (source in audioSources) {
-            try {
-                val record = AudioRecord(
-                    source,
-                    SAMPLE_RATE,
-                    CHANNEL_CONFIG,
-                    AUDIO_FORMAT,
-                    bufferSize
-                )
-                
-                if (record.state == AudioRecord.STATE_INITIALIZED) {
-                    localRecord = record
-                    selectedAudioSource = source
-                    break
-                } else {
-                    record.release()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to initialize AudioRecord with source: $source", e)
-            }
-        }
-        
-        // If no audio source worked, fallback to VOICE_RECOGNITION
-        if (localRecord == null) {
-            selectedAudioSource = MediaRecorder.AudioSource.VOICE_RECOGNITION
-            localRecord = AudioRecord(
-                selectedAudioSource,
-                SAMPLE_RATE,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                bufferSize
-            )
-        }
-        
-        // Create initial recognizer without grammar
-        currentRecognizer = Recognizer(model, SAMPLE_RATE.toFloat())
+        // 初始化音频效果器
+        initializeAudioEffects(localRecord)
 
         // Log AudioRecord initialization details
         Log.i("AudioRecord", "Initialized with:")
-        Log.i("AudioRecord", "  audioSource: $selectedAudioSource")
+        Log.i("AudioRecord", "  audioSource: $audioSource")
         Log.i("AudioRecord", "  sampleRate: $SAMPLE_RATE")
         Log.i("AudioRecord", "  channelConfig: $CHANNEL_CONFIG")
         Log.i("AudioRecord", "  audioFormat: $AUDIO_FORMAT")
@@ -153,6 +128,11 @@ class AsrController(
                 
                 while (isRunning) {
                     val read = localRecord.read(buffer, 0, buffer.size)
+                    
+                    // 如果被静默，则跳过处理
+                    if (asrMuted) {
+                        continue
+                    }
                     
                     // Calculate RMS for logging
                     var sum = 0.0
@@ -194,16 +174,123 @@ class AsrController(
                     Log.w(TAG, "Error closing Recognizer", e)
                 }
                 
+                // 释放音频效果器
+                releaseAudioEffects()
+                
                 Log.d(TAG, "Resources released")
             }
         }
     }
 
+    private fun initializeAudioEffects(audioRecord: AudioRecord) {
+        // Acoustic Echo Canceler
+        if (AcousticEchoCanceler.isAvailable()) {
+            Log.d(TAG, "AEC: isAvailable=true")
+            try {
+                acousticEchoCanceler = AcousticEchoCanceler.create(audioRecord.audioSessionId)
+                if (acousticEchoCanceler != null) {
+                    val success = acousticEchoCanceler!!.setEnabled(true)
+                    Log.d(TAG, "AEC: enabled=$success")
+                } else {
+                    Log.d(TAG, "AEC: create returned null")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "AEC: Failed to initialize", e)
+            }
+        } else {
+            Log.d(TAG, "AEC: isAvailable=false")
+        }
+
+        // Noise Suppressor
+        if (NoiseSuppressor.isAvailable()) {
+            Log.d(TAG, "NS: isAvailable=true")
+            try {
+                noiseSuppressor = NoiseSuppressor.create(audioRecord.audioSessionId)
+                if (noiseSuppressor != null) {
+                    val success = noiseSuppressor!!.setEnabled(true)
+                    Log.d(TAG, "NS: enabled=$success")
+                } else {
+                    Log.d(TAG, "NS: create returned null")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "NS: Failed to initialize", e)
+            }
+        } else {
+            Log.d(TAG, "NS: isAvailable=false")
+        }
+
+        // Automatic Gain Control (Optional)
+        if (AutomaticGainControl.isAvailable()) {
+            Log.d(TAG, "AGC: isAvailable=true")
+            try {
+                automaticGainControl = AutomaticGainControl.create(audioRecord.audioSessionId)
+                if (automaticGainControl != null) {
+                    val success = automaticGainControl!!.setEnabled(true)
+                    Log.d(TAG, "AGC: enabled=$success")
+                } else {
+                    Log.d(TAG, "AGC: create returned null")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "AGC: Failed to initialize", e)
+            }
+        } else {
+            Log.d(TAG, "AGC: isAvailable=false")
+        }
+    }
+
+    private fun releaseAudioEffects() {
+        try {
+            acousticEchoCanceler?.setEnabled(false)
+            acousticEchoCanceler?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing AEC", e)
+        }
+
+        try {
+            noiseSuppressor?.setEnabled(false)
+            noiseSuppressor?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing NS", e)
+        }
+
+        try {
+            automaticGainControl?.setEnabled(false)
+            automaticGainControl?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing AGC", e)
+        }
+
+        acousticEchoCanceler = null
+        noiseSuppressor = null
+        automaticGainControl = null
+    }
+
     fun stopContinuousAsr() {
         isRunning = false
+        isPaused = false
         recordingThread?.interrupt()
         Log.d("ASR", "ASR_STATE=SESSION_END session=$sessionId partialEmits=$partialEmitCount finalEmits=$finalEmitCount")
     }
+
+    /**
+     * 用于外部控制 ASR 的静默状态（例如在 TTS 播放期间）
+     */
+    fun setMuted(muted: Boolean) {
+        asrMuted = muted
+        Log.d("ASR", "ASR_STATE=MUTED state=${if (muted) "MUTED" else "UNMUTED"}")
+    }
+
+    fun pause() {
+        isPaused = true
+        Log.d("ASR", "ASR_STATE=PAUSED")
+    }
+
+    fun resume() {
+        isPaused = false
+        Log.d("ASR", "ASR_STATE=RESUMED")
+    }
+
+    fun isPaused(): Boolean = isPaused
 
     private fun resetRecognizer() {
         try {
@@ -221,9 +308,22 @@ class AsrController(
      * ASR 状态机处理函数
      */
     private fun processStateMachine(localRecord: AudioRecord, rms: Double, read: Int) {
+        // 如果被静默，则跳过所有处理，只更新时间防止进入 FINAL
+        if (asrMuted) {
+            lastVoiceTime = System.currentTimeMillis()
+            return
+        }
+        
         val currentTime = System.currentTimeMillis()
         
         when (currentState) {
+            AsrState.IDLE -> {
+                // 从 IDLE 进入 LISTENING
+                currentState = AsrState.LISTENING
+                callbacksEnabled = true
+                lastVoiceTime = currentTime
+                Log.d("ASR", "STATE=IDLE -> LISTENING")
+            }
             AsrState.LISTENING -> {
                 // 更新语音活动状态
                 val wasInSpeech = isInSpeech
@@ -268,22 +368,14 @@ class AsrController(
             AsrState.COOLDOWN -> {
                 // 冷却时间结束后回到监听状态
                 if (currentTime >= cooldownEndTime) {
-                    currentState = AsrState.LISTENING
+                    currentState = AsrState.IDLE
                     callbacksEnabled = true
                     lastVoiceTime = currentTime // 修复：初始化 lastVoiceTime
                     inVoiceSession = false
-                    Log.d("ASR", "ASR_STATE=LISTENING session=$sessionId")
+                    Log.d("ASR", "ASR_STATE=IDLE session=$sessionId")
                 }
                 // 在冷却期间仍然处理音频数据，但不触发任何回调
                 processAudioData(localRecord, read, rms)
-            }
-            
-            AsrState.IDLE -> {
-                // 不应该到达这里，但为了完整性
-                currentState = AsrState.LISTENING
-                callbacksEnabled = true
-                lastVoiceTime = currentTime // 修复：初始化 lastVoiceTime
-                Log.d("ASR", "ASR_STATE=LISTENING session=$sessionId")
             }
         }
     }
@@ -321,6 +413,7 @@ class AsrController(
         // Process result only if json is not blank
         if (json.isNotBlank()) {
             try {
+                // 确保 json 是非空字符串
                 val jsonObj = JSONObject(json)
                 
                 // Parse partial result
@@ -339,7 +432,7 @@ class AsrController(
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error parsing JSON result", e)
+                Log.e(TAG, "Error parsing JSON result: $json", e)
             }
         }
     }
@@ -386,6 +479,7 @@ class AsrController(
             val finalResult = recognizer.finalResult
             if (finalResult.isNotBlank()) {
                 try {
+                    // 确保 finalResult 是非空字符串
                     val jsonObj = JSONObject(finalResult)
                     if (jsonObj.has("text")) {
                         val text = jsonObj.optString("text", "")
@@ -398,7 +492,7 @@ class AsrController(
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error parsing final result", e)
+                    Log.e(TAG, "Error parsing final result: $finalResult", e)
                 }
             }
         }

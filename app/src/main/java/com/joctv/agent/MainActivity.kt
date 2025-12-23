@@ -1,11 +1,18 @@
 package com.joctv.agent
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.speech.tts.TextToSpeech
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.view.View
 import android.widget.*
@@ -25,9 +32,12 @@ import kotlinx.coroutines.*
 import org.vosk.Model
 import org.vosk.android.StorageService
 import java.io.File
+import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+private const val ASR_UNMUTE_DELAY_MS = 500L
 
 class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.TTSListener {
     private val TAG = "MainActivity"
@@ -47,8 +57,15 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
     private lateinit var tvCountdown: TextView
     private lateinit var tvWakewordHits: TextView
     private lateinit var btnPauseResume: Button
+    private lateinit var btnTtsReplay: Button
+    private lateinit var btnTtsStop: Button
+    private lateinit var vStatusLight: View
+    private lateinit var ivPauseIcon: ImageView
+    private lateinit var pbVolume: ProgressBar
     private lateinit var tvAsrPartial: TextView
     private lateinit var tvAsrFinal: TextView
+    
+    private var toneGenerator: ToneGenerator? = null
     private lateinit var tvRouterDecision: TextView
     private lateinit var tvCoreAsrPartial: TextView
     private lateinit var tvCoreAsrFinal: TextView
@@ -81,7 +98,7 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
         
         initUI()
         startSystemMonitor()
-        initTTS()
+        // initTTS() // 移至模型加载后延迟执行
         initIntentRouter()
         initWebAnswerClient()
         
@@ -107,7 +124,15 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
         tvCountdown = findViewById(R.id.tvCountdown)
         tvWakewordHits = findViewById(R.id.tvWakewordHits)
         btnPauseResume = findViewById(R.id.btnPauseResume)
+        btnTtsReplay = findViewById(R.id.btnTtsReplay)
+        btnTtsStop = findViewById(R.id.btnTtsStop)
+        vStatusLight = findViewById(R.id.vStatusLight)
+        ivPauseIcon = findViewById(R.id.ivPauseIcon)
+        pbVolume = findViewById(R.id.pbVolume)
         tvAsrPartial = findViewById(R.id.tvAsrPartial)
+        
+        toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+        pbVolume.progress = (currentVolume * 100).toInt()
         tvAsrFinal = findViewById(R.id.tvAsrFinal)
         tvRouterDecision = findViewById(R.id.tvRouterDecision)
         tvCoreAsrPartial = findViewById(R.id.tvCoreAsrPartial)
@@ -125,6 +150,8 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
         btnVideoVolumeDown = findViewById(R.id.btnVideoVolumeDown)
         
         btnPauseResume.setOnClickListener { toggleRecording() }
+        btnTtsReplay.setOnClickListener { replayTts() }
+        btnTtsStop.setOnClickListener { stopTts() }
         btnVideoPlayPause.setOnClickListener { toggleVideoPlayback() }
         btnVideoVolumeDown.setOnClickListener { adjustVideoVolume(false) }
         btnVideoVolumeUp.setOnClickListener { adjustVideoVolume(true) }
@@ -161,7 +188,8 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
 
     private fun loadVoskModel() {
         lifecycleScope.launch {
-            tvStatus.text = "Status: Loading Model..."
+            tvStatus.text = "Status: ASR Initializing..."
+            val startTime = System.currentTimeMillis() // 记录开始时间
             try {
                 val modelName = "vosk-model-small-cn-0.22"
                 val extDir = File("/sdcard/$modelName")
@@ -174,13 +202,19 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
                     }
                 }
                 
+                // Calculate duration
+                val duration = System.currentTimeMillis() - startTime
+                
                 model = loadedModel
                 asrController = AsrController(loadedModel, this@MainActivity)
                 asrController?.startContinuousAsr()
                 
-                tvStatus.text = "Status: Ready"
-                tvModel.text = "Model: $modelName"
+                tvStatus.text = "Status: ASR Ready"
+                tvModel.text = "Model: $modelName (loaded in ${duration}ms)" // 显示加载耗时
                 addJsonBroadcastLog("SYSTEM", "INIT", null, "System initialized", null)
+                
+                // 核心修复：模型就绪后，先检查TTS数据，再延迟初始化TTS
+                checkTtsDataAndInit()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load model", e)
                 tvStatus.text = "Status: Error - ${e.message}"
@@ -188,12 +222,78 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
         }
     }
 
-    private fun initTTS() { ttsManager = TTSManager(this, this) }
+    private fun initTTS() { 
+        try {
+            ttsManager = TTSManager(this, this) 
+        } catch (e: Exception) {
+            Log.e(TAG, "TTS initialization failed", e)
+            tvStatus.text = "Status: TTS Init Failed"
+        }
+    }
+
+    private fun checkTtsDataAndInit() {
+        try {
+            Log.d(TAG, "Checking TTS data...")
+            val checkIntent = Intent()
+            checkIntent.action = TextToSpeech.Engine.ACTION_CHECK_TTS_DATA
+            // 显式指定引擎进行检查
+            checkIntent.setPackage("com.k2fsa.sherpa.onnx.tts.engine")
+            
+            // 延迟 1 秒初始化，给系统服务留出响应时间
+            Handler(Looper.getMainLooper()).postDelayed({
+                initTTS()
+            }, 1000)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking TTS data", e)
+            initTTS() // 降级直接初始化
+        }
+    }
     private fun initIntentRouter() { intentRouter = IntentRouter(this) }
     private fun initWebAnswerClient() { webAnswerClient = WebAnswerClient(this) }
 
-    private fun toggleRecording() { Log.d(TAG, "Toggle recording clicked") }
+    private fun toggleRecording() { 
+        asrController?.let {
+            if (it.isPaused()) {
+                it.resume()
+                btnPauseResume.text = "暂停"
+                ivPauseIcon.visibility = View.GONE
+                vStatusLight.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_green_light))
+                playBeep(ToneGenerator.TONE_PROP_ACK)
+            } else {
+                it.pause()
+                btnPauseResume.text = "开始"
+                ivPauseIcon.visibility = View.VISIBLE
+                vStatusLight.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
+                playBeep(ToneGenerator.TONE_PROP_BEEP)
+            }
+        }
+    }
 
+    private fun playBeep(toneType: Int) {
+        toneGenerator?.startTone(toneType, 150)
+    }
+
+    private fun replayTts() {
+        val text = tvOutputText.text.toString()
+        if (text.isNotEmpty()) {
+            Log.d(TAG, "Replaying TTS: $text")
+            playBeep(ToneGenerator.TONE_PROP_PROMPT)
+            vStatusLight.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_blue_light))
+            ttsManager?.speak(text)
+        } else {
+            Toast.makeText(this, "没有可播报的内容", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun stopTts() {
+        Log.d(TAG, "Stopping TTS")
+        ttsManager?.stop()
+        vStatusLight.setBackgroundColor(ContextCompat.getColor(this, android.R.color.darker_gray))
+        playBeep(ToneGenerator.TONE_PROP_BEEP2)
+    }
+
+    // --- AsrController.AsrListener ---
     override fun onAsrResult(text: String, isFinal: Boolean) {
         val cleanedText = text.replace(" ", "")
         runOnUiThread {
@@ -211,10 +311,77 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
         }
     }
 
-    override fun onTTSReady() { Log.d(TAG, "TTS Ready") }
-    override fun onTTSSpeak() { Log.d(TAG, "TTS Speaking") }
-    override fun onTTSDone() { Log.d(TAG, "TTS Done") }
-    override fun onTTSError(error: String) { Log.e(TAG, "TTS Error: $error") }
+    // --- TTSManager.TTSListener ---
+    override fun onTTSReady() { 
+        Log.d(TAG, "TTS Ready")
+        runOnUiThread { 
+            tvStatus.text = "Status: ASR Ready (TTS OK)"
+            // 将 TTS 状态追加到 LLM LOG
+            val currentTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            tvLlmLog.append("\n[$currentTime] [TTS] Ready")
+        }
+    }
+    override fun onTTSStart() { 
+        Log.d(TAG, "TTS Start - Muting ASR")
+        runOnUiThread { 
+            asrController?.setMuted(true)
+            vStatusLight.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_blue_light))
+            // 将 TTS 状态追加到 LLM LOG
+            val currentTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            tvLlmLog.append("\n[$currentTime] [TTS] Speaking: ${tvOutputText.text.toString().take(20)}...")
+        }
+    }
+    override fun onTTSSpeak() { 
+        Log.d(TAG, "TTS Speaking")
+        runOnUiThread { btnTtsReplay.isEnabled = false }
+    }
+    override fun onTTSDone() { 
+        Log.d(TAG, "TTS Done - Unmuting ASR in ${ASR_UNMUTE_DELAY_MS}ms")
+        runOnUiThread { 
+            // 延迟恢复 ASR，防止 TTS 尾音被误识别
+            Handler(Looper.getMainLooper()).postDelayed({
+                asrController?.setMuted(false)
+                Log.d(TAG, "ASR unmuted after TTS")
+            }, ASR_UNMUTE_DELAY_MS)
+            
+            btnTtsReplay.isEnabled = true
+            vStatusLight.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_green_light))
+            // 清除高亮
+            tvOutputText.text = tvOutputText.text.toString()
+            
+            // 将 TTS 状态追加到 LLM LOG
+            val currentTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            tvLlmLog.append("\n[$currentTime] [TTS] Done")
+        }
+    }
+    override fun onTTSError(error: String) { 
+        Log.e(TAG, "TTS Error: $error")
+        runOnUiThread { 
+            tvStatus.text = "Status: TTS Error"
+            vStatusLight.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_red_light))
+            Toast.makeText(this@MainActivity, error, Toast.LENGTH_LONG).show()
+            btnTtsReplay.isEnabled = true
+            
+            // 将 TTS 状态追加到 LLM LOG
+            val currentTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            tvLlmLog.append("\n[$currentTime] [TTS] Error: $error")
+        }
+    }
+    override fun onTTSProgress(start: Int, end: Int) {
+        runOnUiThread {
+            val fullText = tvOutputText.text.toString()
+            if (start < fullText.length && end <= fullText.length) {
+                val spannable = SpannableString(fullText)
+                spannable.setSpan(
+                    ForegroundColorSpan(ContextCompat.getColor(this, android.R.color.holo_orange_light)),
+                    start,
+                    end,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                tvOutputText.text = spannable
+            }
+        }
+    }
 
     private fun processFinalResult(text: String) {
         if (text.isEmpty()) return
@@ -333,7 +500,8 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
             videoView.setOnPreparedListener { mp ->
                 mp.isLooping = true
                 mp.setVolume(currentVolume, currentVolume)
-                videoView.start()
+                // 移除自动播放
+                // videoView.start()
             }
             videoView.setOnErrorListener { _, what, extra ->
                 runOnUiThread { tvOutputText.text = "视频播放失败 (Error: $what, $extra)" }
@@ -348,7 +516,20 @@ class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.
     }
 
     private fun adjustVideoVolume(increase: Boolean) {
+        val oldVolume = currentVolume
         currentVolume = if (increase) (currentVolume + 0.1f).coerceAtMost(1.0f) else (currentVolume - 0.1f).coerceAtLeast(0.0f)
+        
+        if (currentVolume != oldVolume) {
+            pbVolume.progress = (currentVolume * 100).toInt()
+            playBeep(ToneGenerator.TONE_PROP_ACK)
+            // 如果达到极值，播放特殊提示音
+            if (currentVolume == 1.0f || currentVolume == 0.0f) {
+                playBeep(ToneGenerator.TONE_CDMA_PIP)
+            }
+        } else {
+            // 已经在极值，播放警告音
+            playBeep(ToneGenerator.TONE_CDMA_LOW_L)
+        }
     }
 
     private fun logViewCoordinates() {

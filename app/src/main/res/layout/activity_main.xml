@@ -180,7 +180,7 @@
     <LinearLayout
         android:id="@+id/ll_statusBody"
         android:layout_width="0dp"
-        android:layout_height="190px"
+        android:layout_height="230px"
         android:orientation="vertical"
         android:background="#222222"
         android:padding="10px"
@@ -189,7 +189,22 @@
         app:layout_constraintTop_toBottomOf="@id/tv_statusTitle"
         android:layout_marginTop="4px"
         android:layout_marginEnd="10px">
-        <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Status: Initializing" android:textColor="#FFA500" android:textSize="12sp"/>
+        
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="4px">
+            <View
+                android:id="@+id/vStatusLight"
+                android:layout_width="12px"
+                android:layout_height="12px"
+                android:background="@android:color/darker_gray"
+                android:layout_marginEnd="8px"/>
+            <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Status: Initializing" android:textColor="#FFA500" android:textSize="12sp"/>
+        </LinearLayout>
+
         <TextView android:id="@+id/tvVadInfo" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="VAD: RMS=0.0" android:textColor="#00FFFF" android:textSize="12sp"/>
         <TextView android:id="@+id/tvCountdown" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Countdown: 0s" android:textColor="#FFFF00" android:textSize="12sp"/>
         <TextView android:id="@+id/tvWakewordHits" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Wakeword Hits: 0" android:textColor="#FF00FF" android:textSize="12sp"/>
@@ -203,6 +218,32 @@
             android:background="#FF5722"
             android:textColor="#FFFFFF"
             android:layout_marginTop="4px"/>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="36px"
+            android:orientation="horizontal"
+            android:layout_marginTop="4px">
+            <Button
+                android:id="@+id/btnTtsReplay"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="重播语音"
+                android:textSize="10sp"
+                android:background="#4CAF50"
+                android:textColor="#FFFFFF"
+                android:layout_marginEnd="2px"/>
+            <Button
+                android:id="@+id/btnTtsStop"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="停止播报"
+                android:textSize="10sp"
+                android:background="#F44336"
+                android:textColor="#FFFFFF"
+                android:layout_marginStart="2px"/>
+        </LinearLayout>
     </LinearLayout>
 
     <TextView
@@ -281,6 +322,36 @@
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent"/>
+            
+            <!-- 暂停图标遮罩 -->
+            <ImageView
+                android:id="@+id/ivPauseIcon"
+                android:layout_width="60px"
+                android:layout_height="60px"
+                android:src="@android:drawable/ic_media_pause"
+                android:alpha="0.6"
+                android:visibility="gone"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:tint="#FFFFFF" />
+
+            <!-- 实时音量条 -->
+            <ProgressBar
+                android:id="@+id/pbVolume"
+                style="@android:style/Widget.ProgressBar.Horizontal"
+                android:layout_width="0dp"
+                android:layout_height="4px"
+                android:max="100"
+                android:progress="50"
+                android:progressDrawable="@android:drawable/progress_horizontal"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                android:layout_marginBottom="4px"
+                android:layout_marginStart="10px"
+                android:layout_marginEnd="10px" />
         </androidx.constraintlayout.widget.ConstraintLayout>
         <LinearLayout
             android:layout_width="70px"
