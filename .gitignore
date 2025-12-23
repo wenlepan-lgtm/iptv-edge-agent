@@ -17,6 +17,7 @@ local.properties
 
 # 排除所有模型文件和资源
 app/src/main/assets/model/
+app/src/main/assets/config.properties
 vosk-model-*
 *.wav
 *.pcm

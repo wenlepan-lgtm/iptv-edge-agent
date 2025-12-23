@@ -4,11 +4,13 @@ kotlin = "1.9.0"
 coreKtx = "1.13.1"
 leanback = "1.0.0"
 lifecycleRuntimeKtx = "2.8.2"
+constraintLayout = "2.1.4"
 
 [libraries]
 core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 leanback = { group = "androidx.leanback", name = "leanback", version.ref = "leanback" }
 lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintLayout" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

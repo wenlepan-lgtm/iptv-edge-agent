@@ -47,6 +47,7 @@ dependencies {
     implementation(libs.core.ktx)
     implementation(libs.leanback)
     implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.constraintlayout)
     
     // AndroidX AppCompat and Activity dependencies
     implementation("androidx.appcompat:appcompat:1.6.1")
@@ -54,4 +55,7 @@ dependencies {
     
     // Vosk Android SDK
     implementation("com.alphacephei:vosk-android:0.3.75")
+    
+    // OkHttp for WebAnswerClient
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "biz": "TV",
+      "intent": "TV_OPEN_LIVE",
+      "priority": 100,
+      "keywords_any": ["看电视", "电视直播", "直播", "电视频道", "看频道"],
+      "keywords_none": ["天气", "新闻里说", "股市"],
+      "reply": "好的，为您打开电视直播。"
+    },
+    {
+      "biz": "TV",
+      "intent": "TV_OPEN_VOD",
+      "priority": 95,
+      "keywords_any": ["点播", "电影", "电视剧", "播放", "我要看", "片子"],
+      "reply": "好的，为您打开点播。"
+    },
+    {
+      "biz": "TV",
+      "intent": "TV_SCREEN_CAST",
+      "priority": 90,
+      "keywords_any": ["投屏", "手机投屏", "怎么投屏", "投到电视", "镜像"],
+      "reply": "好的，投屏指引已为您打开。"
+    },
+    {
+      "biz": "HOTEL",
+      "intent": "HOTEL_WIFI",
+      "priority": 90,
+      "keywords_any": ["上网", "wifi", "Wi-Fi", "网络密码", "怎么连网", "连不上网"],
+      "reply": "好的，我来帮您查看上网方式与网络信息。"
+    },
+    {
+      "biz": "HOTEL",
+      "intent": "HOTEL_LAUNDRY",
+      "priority": 85,
+      "keywords_any": ["洗衣", "洗衣房", "洗衣服务", "干洗", "熨烫"],
+      "reply": "好的，我为您提供洗衣服务信息。"
+    },
+    {
+      "biz": "HOTEL",
+      "intent": "HOTEL_RESTAURANT",
+      "priority": 85,
+      "keywords_any": ["餐厅", "早餐", "午餐", "晚餐", "几点开", "在哪里吃饭", "送餐", "客房送餐"],
+      "reply": "好的，我为您提供餐厅与用餐信息。"
+    },
+    {
+      "biz": "HOTEL",
+      "intent": "HOTEL_CHECKOUT",
+      "priority": 80,
+      "keywords_any": ["退房", "我要退房", "延迟退房", "几点退房"],
+      "reply": "好的，我来协助您办理退房相关事项。"
+    },
+    {
+      "biz": "HOTEL",
+      "intent": "HOTEL_EXTEND_STAY",
+      "priority": 80,
+      "keywords_any": ["续住", "延住", "再住一晚", "多住一天", "续房"],
+      "reply": "好的，我来协助您续住。"
+    },
+
+    {
+      "biz": "RCU",
+      "intent": "AC_SET_TEMP",
+      "priority": 100,
+      "keywords_any": ["空调", "冷一点", "热一点", "温度", "调到", "设为"],
+      "slots": [
+        { "name": "temp", "type": "int", "extract": "TEMP_NUMBER" }
+      ],
+      "reply": "好的，已为您调整空调温度。"
+    },
+    {
+      "biz": "RCU",
+      "intent": "AC_POWER_ON",
+      "priority": 95,
+      "keywords_any": ["打开空调", "开空调", "空调开一下"],
+      "reply": "好的，已为您打开空调。"
+    },
+    {
+      "biz": "RCU",
+      "intent": "AC_POWER_OFF",
+      "priority": 95,
+      "keywords_any": ["关闭空调", "关空调", "空调关一下"],
+      "reply": "好的，已为您关闭空调。"
+    },
+    {
+      "biz": "RCU",
+      "intent": "LIGHT_ON",
+      "priority": 90,
+      "keywords_any": ["开灯", "打开灯", "灯开一下", "亮一点"],
+      "reply": "好的，已为您打开灯光。"
+    },
+    {
+      "biz": "RCU",
+      "intent": "LIGHT_OFF",
+      "priority": 90,
+      "keywords_any": ["关灯", "关闭灯", "灯关一下", "暗一点"],
+      "reply": "好的，已为您关闭灯光。"
+    },
+
+    {
+      "biz": "ROBOT",
+      "intent": "ROBOT_DELIVER_WATER",
+      "priority": 85,
+      "keywords_any": ["我要喝水", "送水", "矿泉水", "瓶装水", "一瓶水"],
+      "reply": "好的，我为您安排送水服务。"
+    },
+    {
+      "biz": "ROBOT",
+      "intent": "ROBOT_DELIVER_FOOD",
+      "priority": 85,
+      "keywords_any": ["我饿了", "送吃的", "送餐", "点餐", "我要吃饭"],
+      "reply": "好的，我为您安排送餐服务。"
+    }
+  ],
+
+  "slot_extractors": {
+    "TEMP_NUMBER": {
+      "regex": "(?:调到|设为|到|成)?\\s*(\\d{2})\\s*(?:度|℃)?",
+      "min": 16,
+      "max": 30,
+      "default": 24
+    }
+  },
+
+  "web_fallback_keywords": ["天气", "明天", "后天", "新闻", "股票", "汇率", "行程", "怎么去", "附近", "推荐", "百科", "是谁", "是什么"]
+}

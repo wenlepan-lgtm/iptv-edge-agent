@@ -12,11 +12,14 @@ data class MetricsSnapshot(
     val diskUsedGb: Float?,
     val diskTotalGb: Float?,
     val netIf: String?,
-    val netRxKbps: Int?,
-    val netTxKbps: Int?,
+    val netRxKbps: Double?,
+    val netTxKbps: Double?,
     val npuLoad: String?,
     val gpuFreq: String?,
-    val gpuLoad: String?
+    val gpuLoad: String?,
+    val cpuModel: String?,
+    val cpuCores: Int?,
+    val cpuFreqMax: Int?
 )
 
 class MetricsCollector(private val debug: Boolean = false) {
@@ -32,6 +35,9 @@ class MetricsCollector(private val debug: Boolean = false) {
         val net = safe { readNetKbps() }
         val npu = safe { readNpuLoad() }
         val gpu = safe { readGpuInfo() }
+        val cpuModel = safe { getSystemProperty("ro.board.platform") } ?: "rk3576"
+        val cpuCores = Runtime.getRuntime().availableProcessors()
+        val cpuFreqMax = safe { readCpuFreqMax() } ?: 2208
 
         return MetricsSnapshot(
             cpuPercent = cpu,
@@ -44,8 +50,29 @@ class MetricsCollector(private val debug: Boolean = false) {
             netTxKbps = net?.third,
             npuLoad = npu,
             gpuFreq = gpu?.first,
-            gpuLoad = gpu?.second
+            gpuLoad = gpu?.second,
+            cpuModel = cpuModel,
+            cpuCores = cpuCores,
+            cpuFreqMax = cpuFreqMax
         )
+    }
+
+    private fun readCpuFreqMax(): Int? {
+        return try {
+            val freqStr = File("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").readText().trim()
+            freqStr.toInt() / 1000
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun getSystemProperty(key: String): String? {
+        return try {
+            val process = Runtime.getRuntime().exec("getprop $key")
+            process.inputStream.bufferedReader().use { it.readLine()?.trim() }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun readCpuPercent(): Int {
@@ -72,7 +99,6 @@ class MetricsCollector(private val debug: Boolean = false) {
     private fun readProcStat(): LongArray {
         val line = File("/proc/stat").readLines().first { it.startsWith("cpu ") }
         val parts = line.trim().split(Regex("\\s+")).drop(1).map { it.toLong() }
-        // user nice system idle iowait irq softirq steal guest guest_nice
         val arr = LongArray(parts.size)
         for (i in parts.indices) arr[i] = parts[i]
         return arr
@@ -85,7 +111,6 @@ class MetricsCollector(private val debug: Boolean = false) {
         val usedKb = totalKb - availKb
         val totalMb = (totalKb / 1024).toInt()
         val usedMb = (usedKb / 1024).toInt()
-        if (debug) Log.d("Metrics", "mem used=$usedMb total=$totalMb")
         return usedMb to totalMb
     }
 
@@ -101,8 +126,8 @@ class MetricsCollector(private val debug: Boolean = false) {
 
     data class Triple<A, B, C>(val first: A, val second: B, val third: C)
 
-    private fun readNetKbps(): Triple<String, Int, Int> {
-        val iface = "wlan0" // Force wlan0 as per requirement
+    private fun readNetKbps(): Triple<String, Double, Double> {
+        val iface = "wlan0"
         val (rx, tx) = readNetDev(iface)
 
         val last = lastNet
@@ -111,16 +136,15 @@ class MetricsCollector(private val debug: Boolean = false) {
         lastNetIf = iface
 
         if (last == null || lastIface != iface) {
-            return Triple(iface, 0, 0)
+            return Triple(iface, 0.0, 0.0)
         }
 
         val rxDiff = (rx - last.first).coerceAtLeast(0)
         val txDiff = (tx - last.second).coerceAtLeast(0)
 
-        val rxKb = (rxDiff / 1024).toInt()
-        val txKb = (txDiff / 1024).toInt()
+        val rxKb = rxDiff / 1024.0
+        val txKb = txDiff / 1024.0
 
-        if (debug) Log.d("Metrics", "net($iface) rx=$rxKb KB/s tx=$txKb KB/s")
         return Triple(iface, rxKb, txKb)
     }
 

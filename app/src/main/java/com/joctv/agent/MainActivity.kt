@@ -1,56 +1,79 @@
 package com.joctv.agent
 
-import android.app.ActivityManager
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
-import android.widget.TextView
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.joctv.agent.asr.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import com.joctv.agent.asr.AsrController
+import com.joctv.agent.intent.IntentRouter
+import com.joctv.agent.intent.RouteResult
+import com.joctv.agent.intent.RouteType
+import com.joctv.agent.intent.SlotValue
+import com.joctv.agent.tts.TTSManager
+import com.joctv.agent.utils.MetricsCollector
+import com.joctv.agent.web.WebAnswerClient
+import kotlinx.coroutines.*
 import org.vosk.Model
 import org.vosk.android.StorageService
 import java.io.File
-import java.io.FileInputStream
-import java.io.DataOutputStream
-import kotlin.math.sqrt
+import java.util.*
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
-class MainActivity : AppCompatActivity(), 
-    AsrController.AsrListener {
+class MainActivity : AppCompatActivity(), AsrController.AsrListener, TTSManager.TTSListener {
     private val TAG = "MainActivity"
-    
+    private val PERMISSIONS_REQUEST_RECORD_AUDIO = 1
+
     private lateinit var tvCpu: TextView
+    private lateinit var tvCpuModel: TextView
     private lateinit var tvMem: TextView
     private lateinit var tvDisk: TextView
     private lateinit var tvNet: TextView
-    private lateinit var tvAsrText: TextView
+    private lateinit var tvNpu: TextView
+    private lateinit var tvGpu: TextView
     private lateinit var tvReplyText: TextView
     private lateinit var tvStatus: TextView
     private lateinit var tvModel: TextView
     private lateinit var tvVadInfo: TextView
     private lateinit var tvCountdown: TextView
     private lateinit var tvWakewordHits: TextView
-    private lateinit var btnPauseResume: android.widget.Button
-    
-    private var model: Model? = null
+    private lateinit var btnPauseResume: Button
+    private lateinit var tvAsrPartial: TextView
+    private lateinit var tvAsrFinal: TextView
+    private lateinit var tvRouterDecision: TextView
+    private lateinit var tvCoreAsrPartial: TextView
+    private lateinit var tvCoreAsrFinal: TextView
+    private lateinit var tvCoreRouterDecision: TextView
+    private lateinit var tvOutputText: TextView
+    private lateinit var outputTextScrollView: ScrollView
+    private lateinit var tvLlmLog: TextView
+    private lateinit var llmLogScrollView: ScrollView
+    private lateinit var tvBroadcastLog: TextView
+    private lateinit var broadcastLogScrollView: ScrollView
+    private lateinit var videoView: VideoView
+    private lateinit var btnVideoPlayPause: Button
+    private lateinit var btnVideoVolumeDown: Button
+    private lateinit var btnVideoVolumeUp: Button
+
+    private var isVideoPlaying = true
+    private var currentVolume = 0.5f
+
+    private var ttsManager: TTSManager? = null
     private var asrController: AsrController? = null
+    private var intentRouter: IntentRouter? = null
+    private var webAnswerClient: WebAnswerClient? = null
+    private var model: Model? = null
     
-    private val handler = Handler(Looper.getMainLooper())
-    private var lastNetRx = 0L
-    private var lastNetTx = 0L
-    private var lastNetTime = 0L
-    
-    // Stats
-    private var wakewordHitCount = 0
-    private var noiseFloorRms = 0.0
-    private var speechThreshold = 0.0
+    private var reqIdCounter = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,15 +81,25 @@ class MainActivity : AppCompatActivity(),
         
         initUI()
         startSystemMonitor()
-        loadVoskModel()
+        initTTS()
+        initIntentRouter()
+        initWebAnswerClient()
+        
+        checkPermissionsAndLoadModel()
+        
+        Handler(Looper.getMainLooper()).postDelayed({
+            logViewCoordinates()
+        }, 1000)
     }
 
     private fun initUI() {
         tvCpu = findViewById(R.id.tvCpu)
+        tvCpuModel = findViewById(R.id.tvCpuModel)
         tvMem = findViewById(R.id.tvMem)
         tvDisk = findViewById(R.id.tvDisk)
         tvNet = findViewById(R.id.tvNet)
-        tvAsrText = findViewById(R.id.tvAsrText)
+        tvNpu = findViewById(R.id.tvNpu)
+        tvGpu = findViewById(R.id.tvGpu)
         tvReplyText = findViewById(R.id.tvReplyText)
         tvStatus = findViewById(R.id.tvStatus)
         tvModel = findViewById(R.id.tvModel)
@@ -74,286 +107,263 @@ class MainActivity : AppCompatActivity(),
         tvCountdown = findViewById(R.id.tvCountdown)
         tvWakewordHits = findViewById(R.id.tvWakewordHits)
         btnPauseResume = findViewById(R.id.btnPauseResume)
+        tvAsrPartial = findViewById(R.id.tvAsrPartial)
+        tvAsrFinal = findViewById(R.id.tvAsrFinal)
+        tvRouterDecision = findViewById(R.id.tvRouterDecision)
+        tvCoreAsrPartial = findViewById(R.id.tvCoreAsrPartial)
+        tvCoreAsrFinal = findViewById(R.id.tvCoreAsrFinal)
+        tvCoreRouterDecision = findViewById(R.id.tvCoreRouterDecision)
+        tvOutputText = findViewById(R.id.tvOutputText)
+        outputTextScrollView = findViewById(R.id.outputTextScrollView)
+        tvLlmLog = findViewById(R.id.tvLlmLog)
+        llmLogScrollView = findViewById(R.id.llmLogScrollView)
+        tvBroadcastLog = findViewById(R.id.tvBroadcastLog)
+        broadcastLogScrollView = findViewById(R.id.broadcastLogScrollView)
+        videoView = findViewById(R.id.videoView)
+        btnVideoPlayPause = findViewById(R.id.btnVideoPlayPause)
+        btnVideoVolumeUp = findViewById(R.id.btnVideoVolumeUp)
+        btnVideoVolumeDown = findViewById(R.id.btnVideoVolumeDown)
         
-        // Set up pause/resume button
-        btnPauseResume.setOnClickListener {
-            toggleRecording()
-        }
+        btnPauseResume.setOnClickListener { toggleRecording() }
+        btnVideoPlayPause.setOnClickListener { toggleVideoPlayback() }
+        btnVideoVolumeDown.setOnClickListener { adjustVideoVolume(false) }
+        btnVideoVolumeUp.setOnClickListener { adjustVideoVolume(true) }
+        
+        initVideoPlayer()
     }
 
     private fun startSystemMonitor() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            while (true) {
-                try {
-                    updateSystemMonitorUI()
-                } catch (e: Exception) {
-                    Log.e("Metrics", "Error in system monitor loop", e)
-                }
+        val metricsCollector = MetricsCollector()
+        lifecycleScope.launch {
+            while (isActive) {
+                val snap = withContext(Dispatchers.IO) { metricsCollector.collectSnapshot() }
+                tvCpu.text = "CPU: ${snap.cpuPercent ?: 0}%"
+                tvCpuModel.text = "Model: ${snap.cpuModel ?: "rk3576"}  ${snap.cpuCores ?: 8} Processor  ${snap.cpuFreqMax ?: 2208}MHz"
+                tvMem.text = "MEM: ${snap.memUsedMb ?: 0}MB / ${snap.memTotalMb ?: 0}MB"
+                tvDisk.text = "DISK: ${String.format("%.1f", snap.diskUsedGb ?: 0f)}GB / ${String.format("%.1f", snap.diskTotalGb ?: 0f)}GB"
+                tvNet.text = "NET: IN: ${String.format("%.2f", snap.netRxKbps ?: 0.0)} KB/s  OUT: ${String.format("%.2f", snap.netTxKbps ?: 0.0)} KB/s"
+                tvNpu.text = "NPU: ${snap.npuLoad ?: "0%"}"
+                tvGpu.text = "GPU: ${snap.gpuFreq ?: "0MHz"}"
                 delay(1000)
             }
         }
     }
 
+    private fun checkPermissionsAndLoadModel() {
+        val permissions = arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_EXTERNAL_STORAGE)
+        val missing = permissions.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), PERMISSIONS_REQUEST_RECORD_AUDIO)
+        } else {
+            loadVoskModel()
+        }
+    }
+
     private fun loadVoskModel() {
-        Log.i(TAG, "modelLoad:start")
-        tvStatus.text = "Status: Loading Model..."
-        
-        lifecycleScope.launch(Dispatchers.IO) {
+        lifecycleScope.launch {
+            tvStatus.text = "Status: Loading Model..."
             try {
-                // 优先使用小模型以确保稳定性
-                val smallModelPath = "/sdcard/vosk-model-small-cn-0.22"
-                val largeModelPath = "/sdcard/vosk-model-cn-0.22"
+                val modelName = "vosk-model-small-cn-0.22"
+                val extDir = File("/sdcard/$modelName")
+                val extOk = extDir.exists() && File(extDir, "conf/model.conf").exists()
                 
-                // 如果小模型存在，先用小模型；否则尝试大模型
-                var modelDir = if (File(smallModelPath).exists()) File(smallModelPath) else File(largeModelPath)
-                
-                // External 模型保护逻辑
-                if (modelDir.absolutePath == largeModelPath) {
-                    val largeModelDir = File(largeModelPath)
-                    if (largeModelDir.exists()) {
-                        val rnnlmDir = File(largeModelDir, "rnnlm")
-                        val rescoreDir = File(largeModelDir, "rescore")
-                        if (rnnlmDir.exists() || rescoreDir.exists()) {
-                            Log.w(TAG, "External large model has rnnlm/rescore, skipping and using assets small model")
-                            // 这里应该加载 assets 中的小模型，但原代码没有实现
-                            // 我们暂时保持原逻辑，但记录日志
-                            // modelDir = loadAssetsSmallModel() // 需要实现这个方法
-                        }
+                val loadedModel = withContext(Dispatchers.IO) {
+                    if (extOk) Model(extDir.absolutePath)
+                    else suspendCancellableCoroutine { cont ->
+                        StorageService.unpack(this@MainActivity, "model", "model", { m -> cont.resume(m) }, { e -> cont.resumeWithException(e) })
                     }
                 }
                 
-                if (modelDir.exists()) {
-                    Log.i(TAG, "START loading model: ${modelDir.absolutePath}")
-                    val startTime = System.currentTimeMillis()
-                    
-                    val m = Model(modelDir.absolutePath)
-                    val duration = System.currentTimeMillis() - startTime
-                    Log.i(TAG, "modelLoad:success in ${duration}ms")
-                    
-                    model = m
-                    
-                    withContext(Dispatchers.Main) {
-                        tvModel.text = "Model: ${modelDir.name} (${duration}ms)"
-                        tvStatus.text = "Status: Model Loaded"
-                        Log.i(TAG, "Recognizer is READY")
-                        
-                        // Initialize ASR components
-                        Log.i(TAG, "asr:start")
-                        asrController = AsrController(model!!, this@MainActivity)
-                        
-                        // Start continuous ASR
-                        try {
-                            asrController?.startContinuousAsr()
-                            tvStatus.text = "Status: Continuous ASR Started"
-                        } catch (e: Exception) {
-                            Log.e(TAG, "asr:start failed", e)
-                            tvStatus.text = "Status: ASR Start Failed"
-                        }
-                    }
-                } else {
-                    Log.e(TAG, "No model found at ${modelDir.absolutePath}")
-                    logToUI("No model found on SDCard!")
-                    withContext(Dispatchers.Main) {
-                        tvStatus.text = "Status: No Model Found"
-                    }
-                }
+                model = loadedModel
+                asrController = AsrController(loadedModel, this@MainActivity)
+                asrController?.startContinuousAsr()
+                
+                tvStatus.text = "Status: Ready"
+                tvModel.text = "Model: $modelName"
+                addJsonBroadcastLog("SYSTEM", "INIT", null, "System initialized", null)
             } catch (e: Exception) {
-                Log.e(TAG, "modelLoad:fail", e)
-                logToUI("Model Load Failed: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    tvStatus.text = "Status: Model Load Failed"
-                }
+                Log.e(TAG, "Failed to load model", e)
+                tvStatus.text = "Status: Error - ${e.message}"
             }
         }
     }
 
-    // --- AsrController.AsrListener callbacks ---
-    
-    override fun onAsrResult(text: String, isFinal: Boolean) {
-        // Remove spaces from Chinese recognition results
-        val cleanedText = text.replace(" ", "")
-        
-        // Log results
-        if (isFinal) {
-            Log.d("ASR", "Final Result: $cleanedText")
-        } else {
-            Log.d("ASR", "Partial Result: $cleanedText")
-        }
+    private fun initTTS() { ttsManager = TTSManager(this, this) }
+    private fun initIntentRouter() { intentRouter = IntentRouter(this) }
+    private fun initWebAnswerClient() { webAnswerClient = WebAnswerClient(this) }
 
+    private fun toggleRecording() { Log.d(TAG, "Toggle recording clicked") }
+
+    override fun onAsrResult(text: String, isFinal: Boolean) {
+        val cleanedText = text.replace(" ", "")
         runOnUiThread {
             if (isFinal) {
+                tvAsrFinal.text = cleanedText
+                tvCoreAsrFinal.text = "ASR_FINAL: $cleanedText"
                 tvReplyText.text = cleanedText
-                tvAsrText.text = ""
+                tvAsrPartial.text = ""
+                tvCoreAsrPartial.text = "ASR_PARTIAL: "
+                processFinalResult(cleanedText)
             } else {
-                tvAsrText.text = cleanedText
+                tvAsrPartial.text = cleanedText
+                tvCoreAsrPartial.text = "ASR_PARTIAL: $cleanedText"
             }
         }
     }
 
-    // --- AsrStateMachine.StateListener callbacks ---
-    
-    // Removed all state machine callbacks as we're not using state machine anymore
+    override fun onTTSReady() { Log.d(TAG, "TTS Ready") }
+    override fun onTTSSpeak() { Log.d(TAG, "TTS Speaking") }
+    override fun onTTSDone() { Log.d(TAG, "TTS Done") }
+    override fun onTTSError(error: String) { Log.e(TAG, "TTS Error: $error") }
 
-    // --- VadDetector.VadListener callbacks ---
-    
-    // Removed all VAD callbacks as we're not using VAD anymore
-
-    private fun updateSystemMonitorUI() {
-        val cpuUsage = getCpuUsage()
-        val memUsed = getSystemUsedMemory()
-        val totalMem = getTotalMemory()
-        val diskUsage = getDiskUsage()
-        val totalDisk = getTotalDiskSpace()
-        val (rxRate, txRate) = getNetworkUsage()
-
-        Log.v(TAG, "Monitor: CPU=$cpuUsage, MEM=$memUsed/$totalMem, DISK=$diskUsage/$totalDisk")
-
+    private fun processFinalResult(text: String) {
+        if (text.isEmpty()) return
+        val routeResult = intentRouter?.route(text)
         runOnUiThread {
-            tvCpu.text = "CPU: ${String.format("%.1f", cpuUsage)}%"
-            tvMem.text = "MEM: $memUsed / $totalMem MB"
-            tvDisk.text = "DISK(/data): ${String.format("%.2f", diskUsage)} / ${String.format("%.2f", totalDisk)} GB"
-            tvNet.text = "NET: RX $rxRate KB/s  TX $txRate KB/s"
+            val biz = routeResult?.biz ?: "Internet"
+            val displayBiz = if (routeResult?.type == RouteType.LOCAL_COMMAND) "Local" else "Internet"
+            tvCoreRouterDecision.text = "ROUTER_DECISION: $displayBiz"
+            addJsonBroadcastLog(biz, routeResult?.intent, text, routeResult?.reply, routeResult?.slotValues)
+            when (routeResult?.type) {
+                RouteType.LOCAL_COMMAND -> handleLocalCommand(routeResult)
+                RouteType.WEB_QUERY -> handleWebQuery(routeResult)
+                RouteType.LLM -> handleLLMQuery(routeResult)
+                else -> handleLLMQuery(RouteResult(RouteType.LLM, query = text))
+            }
+        }
+    }
+
+    private fun handleLocalCommand(routeResult: RouteResult) {
+        val replyText = routeResult.reply ?: "好的，已为您处理。"
+        tvOutputText.text = replyText
+        outputTextScrollView.post { outputTextScrollView.fullScroll(View.FOCUS_DOWN) }
+        if (ttsManager?.isReady() == true) ttsManager?.speak(replyText)
+    }
+
+    private fun handleWebQuery(routeResult: RouteResult) {
+        webAnswerClient?.getAnswer(routeResult.query ?: "") { result ->
+            runOnUiThread {
+                val text = if (result.success) cleanMarkdown(result.answerText) else result.answerText
+                tvOutputText.text = text
+                outputTextScrollView.post { outputTextScrollView.fullScroll(View.FOCUS_DOWN) }
+                if (ttsManager?.isReady() == true) ttsManager?.speak(text)
+            }
         }
     }
     
-    private fun toggleRecording() {
-        // Stop current ASR
-        asrController?.stopContinuousAsr()
+    private fun handleLLMQuery(routeResult: RouteResult) {
+        val replyText = "正在处理您的请求，请稍等。"
+        tvOutputText.text = replyText
+        outputTextScrollView.post { outputTextScrollView.fullScroll(View.FOCUS_DOWN) }
+        ttsManager?.speak(replyText)
+    }
+
+    private fun cleanMarkdown(text: String): String = text.replace(Regex("[#*`_~]"), "")
+
+    private fun addJsonBroadcastLog(biz: String, intent: String?, query: String?, reply: String?, slotValues: List<SlotValue>?) {
+        fun jsonEscape(s: String?): String {
+            if (s == null) return ""
+            return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        }
+        val timestamp = System.currentTimeMillis()
+        val timeStr = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.getDefault()).format(Date(timestamp))
+        val counter = synchronized(this) { reqIdCounter++; reqIdCounter }
+        val reqId = "${timeStr}-${String.format("%06d", counter)}"
         
-        // Update button text
-        if (btnPauseResume.text == "Pause Recording") {
-            btnPauseResume.text = "Resume Recording"
-            tvStatus.text = "Status: Recording Paused"
-        } else {
-            btnPauseResume.text = "Pause Recording"
-            tvStatus.text = "Status: Continuous ASR Started"
-            // Restart ASR
-            asrController?.startContinuousAsr()
-        }
-    }
-
-    private fun getDiskUsage(): Double {
-        return try {
-            val stat = android.os.StatFs("/data")
-            val used = (stat.blockCountLong - stat.availableBlocksLong) * stat.blockSizeLong
-            used.toDouble() / (1024.0 * 1024.0 * 1024.0)
-        } catch (e: Exception) { 
-            Log.w("Metrics", "Failed to get disk usage", e)
-            0.0 
-        }
-    }
-
-    private fun getTotalDiskSpace(): Double {
-        return try {
-            val stat = android.os.StatFs("/data")
-            (stat.blockCountLong * stat.blockSizeLong).toDouble() / (1024.0 * 1024.0 * 1024.0)
-        } catch (e: Exception) { 
-            Log.w("Metrics", "Failed to get total disk space", e)
-            0.0 
-        }
-    }
-
-    private fun getCpuUsage(): Float {
-        return try {
-            val lines = File("/proc/stat").readLines()
-            val parts = lines[0].split("\\s+".toRegex())
-            val idle = parts[4].toLong()
-            val total = parts.drop(1).map { it.toLong() }.sum()
-            100f * (1 - idle.toFloat() / total.toFloat())
-        } catch (e: Exception) { 
-            Log.w("Metrics", "Failed to get CPU usage", e)
-            0f 
-        }
-    }
-
-    private fun getSystemUsedMemory(): Long {
-        return try {
-            val memInfo = File("/proc/meminfo").readLines().associate { line ->
-                val parts = line.split(":")
-                parts[0] to parts[1].trim().split(" ")[0].toLong()
+        val sb = StringBuilder()
+        sb.append("{\n")
+        sb.append("    \"ver\": 1,\n")
+        sb.append("    \"type\": \"command\",\n")
+        sb.append("    \"biz\": \"${jsonEscape(biz)}\",\n")
+        sb.append("    \"intent\": \"${jsonEscape(intent ?: "UNKNOWN")}\",\n")
+        sb.append("    \"reqId\": \"${jsonEscape(reqId)}\",\n")
+        sb.append("    \"source\": {\n")
+        sb.append("        \"app\": \"com.joctv.agent\"\n")
+        sb.append("    },\n")
+        sb.append("    \"payload\": {\n")
+        sb.append("        \"query\": \"${jsonEscape(query ?: "")}\",\n")
+        sb.append("        \"reply\": \"${jsonEscape(reply ?: "")}\"")
+        
+        slotValues?.forEach { slot ->
+            sb.append(",\n")
+            if (slot.value is Number) {
+                sb.append("        \"${jsonEscape(slot.name)}\": ${slot.value}")
+            } else {
+                sb.append("        \"${jsonEscape(slot.name)}\": \"${jsonEscape(slot.value.toString())}\"")
             }
-            val total = memInfo["MemTotal"] ?: 0L
-            val free = memInfo["MemFree"] ?: 0L
-            val buffers = memInfo["Buffers"] ?: 0L
-            val cached = memInfo["Cached"] ?: 0L
-            // 已用内存 = 总内存 - 空闲 - 缓冲 - 缓存
-            (total - free - buffers - cached) / 1024
-        } catch (e: Exception) { 
-            Log.w("Metrics", "Failed to get system used memory", e)
-            0L 
         }
-    }
-
-    private fun getTotalMemory(): Long {
-        return try {
-            val line = File("/proc/meminfo").readLines()[0]
-            line.split("\\s+".toRegex())[1].toLong() / 1024
-        } catch (e: Exception) { 
-            Log.w("Metrics", "Failed to get total memory", e)
-            0L 
-        }
-    }
-
-    private fun getNetworkUsage(): Pair<Long, Long> {
-        try {
-            val lines = File("/proc/net/dev").readLines()
-            // 优先寻找 wlan0，如果没有再找 eth0
-            val line = lines.find { it.contains("wlan0") } ?: lines.find { it.contains("eth0") }
+        
+        sb.append("\n    }\n")
+        sb.append("}")
+        
+        val jsonLog = sb.toString()
+        Log.e("BROADCAST_TX", jsonLog)
+        Log.d(TAG, "UI_LOG_APPEND: length=${jsonLog.length}, startsWith={: ${jsonLog.startsWith("{")}}")
+        
+        runOnUiThread {
+            // 如果日志太长，清理一下，防止内存溢出或渲染卡顿
+            if (tvBroadcastLog.text.length > 10000) {
+                tvBroadcastLog.text = ""
+            }
             
-            if (line != null) {
-                val parts = line.trim().split("\\s+".toRegex())
-                val rx = parts[1].toLong() / 1024
-                val tx = parts[9].toLong() / 1024
-                val now = System.currentTimeMillis()
-                if (lastNetTime == 0L) {
-                    lastNetRx = rx; lastNetTx = tx; lastNetTime = now
-                    return Pair(0, 0)
-                }
-                val diff = (now - lastNetTime) / 1000.0
-                val rxRate = ((rx - lastNetRx) / diff).toLong()
-                val txRate = ((tx - lastNetTx) / diff).toLong()
-                lastNetRx = rx; lastNetTx = tx; lastNetTime = now
-                return Pair(rxRate, txRate)
+            if (tvBroadcastLog.text.isNotEmpty()) {
+                tvBroadcastLog.append("\n\n")
             }
-        } catch (e: Exception) {
-            Log.w("Metrics", "Failed to get network usage", e)
+            
+            // 记录当前滚动位置
+            val currentScrollY = broadcastLogScrollView.scrollY
+            
+            tvBroadcastLog.append(jsonLog)
+            
+            // 智能滚动：确保新日志块的顶部可见
+            broadcastLogScrollView.postDelayed({
+                broadcastLogScrollView.fullScroll(View.FOCUS_DOWN)
+            }, 50)
         }
-        return Pair(0, 0)
     }
 
-    private fun executeRootCommand(cmd: String): Int {
-        return try {
-            val p = Runtime.getRuntime().exec("su")
-            val os = DataOutputStream(p.outputStream)
-            os.writeBytes("$cmd\nexit\n")
-            os.flush()
-            p.waitFor()
-        } catch (e: Exception) { -1 }
-    }
-
-    private fun execRootCmdSilent(cmd: String) {
+    private fun initVideoPlayer() {
         try {
-            val p = Runtime.getRuntime().exec("su")
-            val os = DataOutputStream(p.outputStream)
-            os.writeBytes("$cmd\nexit\n")
-            os.flush()
-            p.waitFor()
-        } catch (e: Exception) {}
+            val videoFile = File("/sdcard/1.mp4")
+            if (!videoFile.exists()) {
+                tvOutputText.text = "视频文件不存在: /sdcard/1.mp4"
+                return
+            }
+            videoView.setVideoPath(videoFile.absolutePath)
+            videoView.setOnPreparedListener { mp ->
+                mp.isLooping = true
+                mp.setVolume(currentVolume, currentVolume)
+                videoView.start()
+            }
+            videoView.setOnErrorListener { _, what, extra ->
+                runOnUiThread { tvOutputText.text = "视频播放失败 (Error: $what, $extra)" }
+                true
+            }
+        } catch (e: Exception) { Log.e(TAG, "Video player init failed", e) }
     }
 
-    private fun logToUI(msg: String) {
-        Log.d(TAG, msg)
+    private fun toggleVideoPlayback() {
+        if (videoView.isPlaying) { videoView.pause(); btnVideoPlayPause.text = "播放" }
+        else { videoView.start(); btnVideoPlayPause.text = "暂停" }
     }
 
-    override fun onStop() {
-        super.onStop()
-        // Don't stop ASR in continuous mode
-        // asrController?.stop()
+    private fun adjustVideoVolume(increase: Boolean) {
+        currentVolume = if (increase) (currentVolume + 0.1f).coerceAtMost(1.0f) else (currentVolume - 0.1f).coerceAtLeast(0.0f)
     }
-    
+
+    private fun logViewCoordinates() {
+        val views = listOf(R.id.videoContainer, R.id.llmLogScrollView, R.id.broadcastLogScrollView)
+        views.forEach { id ->
+            val view = findViewById<View>(id)
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            Log.d("ViewCheck", "View ID: ${resources.getResourceEntryName(id)}, bottom: ${location[1] + view.height}")
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        // Stop continuous ASR when activity is destroyed
         asrController?.stopContinuousAsr()
+        ttsManager?.shutdown()
     }
 }

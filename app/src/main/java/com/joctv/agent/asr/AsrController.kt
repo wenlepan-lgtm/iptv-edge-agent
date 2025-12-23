@@ -68,8 +68,7 @@ class AsrController(
         finalEmitCount = 0
         inVoiceSession = false
         
-        Log.d("ASR", "ASR_STATE=LISTENING")
-        Log.d("ASR", "ASR_SESSION=$sessionId START")
+        Log.d("ASR", "ASR_STATE=LISTENING session=$sessionId")
         
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         val bufferSize = BUFFER_SIZE * 2 // Double buffer size for safety
@@ -203,7 +202,7 @@ class AsrController(
     fun stopContinuousAsr() {
         isRunning = false
         recordingThread?.interrupt()
-        Log.d("ASR", "ASR_SESSION=$sessionId END partialEmits=$partialEmitCount finalEmits=$finalEmitCount")
+        Log.d("ASR", "ASR_STATE=SESSION_END session=$sessionId partialEmits=$partialEmitCount finalEmits=$finalEmitCount")
     }
 
     private fun resetRecognizer() {
@@ -235,13 +234,13 @@ class AsrController(
                     voiceStartTime = currentTime
                     if (!inVoiceSession) {
                         inVoiceSession = true
-                        Log.d("ASR", "VOICE_START rms=$rms threshold=$MIN_VAD_RMS")
+                        Log.d("ASR", "ASR_STATE=VOICE_START rms=$rms threshold=$MIN_VAD_RMS")
                     }
                 } else if (wasInSpeech && !isInSpeech) {
                     lastVoiceTime = currentTime
                     if (inVoiceSession) {
                         inVoiceSession = false
-                        Log.d("ASR", "VOICE_END rms=$rms threshold=$MIN_VAD_RMS")
+                        Log.d("ASR", "ASR_STATE=VOICE_END rms=$rms threshold=$MIN_VAD_RMS")
                     }
                 }
                 
@@ -249,10 +248,9 @@ class AsrController(
                 if (!isInSpeech && currentTime - lastVoiceTime >= SILENCE_DURATION_MS && inVoiceSession) {
                     // 触发 final result
                     val silenceMs = currentTime - lastVoiceTime
-                    Log.d("ASR", "FINAL_TRIGGER reason=silence silenceMs=$silenceMs")
+                    Log.d("ASR", "ASR_STATE=FINAL_TRIGGER reason=silence silenceMs=$silenceMs")
                     triggerFinalResult()
                     currentState = AsrState.FINAL
-                    Log.d("ASR", "ASR_STATE=FINAL")
                 } else {
                     // 处理正常的音频数据
                     processAudioData(localRecord, read, rms)
@@ -264,7 +262,7 @@ class AsrController(
                 cooldownEndTime = currentTime + COOLDOWN_MS
                 callbacksEnabled = false
                 currentState = AsrState.COOLDOWN
-                Log.d("ASR", "ASR_STATE=COOLDOWN")
+                Log.d("ASR", "ASR_STATE=COOLDOWN duration=${COOLDOWN_MS}ms")
             }
             
             AsrState.COOLDOWN -> {
@@ -274,7 +272,7 @@ class AsrController(
                     callbacksEnabled = true
                     lastVoiceTime = currentTime // 修复：初始化 lastVoiceTime
                     inVoiceSession = false
-                    Log.d("ASR", "ASR_STATE=LISTENING")
+                    Log.d("ASR", "ASR_STATE=LISTENING session=$sessionId")
                 }
                 // 在冷却期间仍然处理音频数据，但不触发任何回调
                 processAudioData(localRecord, read, rms)
@@ -285,7 +283,7 @@ class AsrController(
                 currentState = AsrState.LISTENING
                 callbacksEnabled = true
                 lastVoiceTime = currentTime // 修复：初始化 lastVoiceTime
-                Log.d("ASR", "ASR_STATE=LISTENING")
+                Log.d("ASR", "ASR_STATE=LISTENING session=$sessionId")
             }
         }
     }
@@ -366,8 +364,7 @@ class AsrController(
             currentTime - lastPartialCallbackTime >= PARTIAL_THROTTLE_MS) {
             
             partialEmitCount++
-            Log.d("ASR", "PARTIAL_EMIT count=$partialEmitCount text=$partial")
-            Log.d("ASR", "partial=$partial")
+            Log.d("ASR", "ASR_PARTIAL_EMIT count=$partialEmitCount text=$partial")
             listener.onAsrResult(partial, false)
             lastPartial = partial
             lastPartialCallbackTime = currentTime
@@ -394,8 +391,7 @@ class AsrController(
                         val text = jsonObj.optString("text", "")
                         if (text.isNotEmpty()) {
                             finalEmitCount++
-                            Log.d("ASR", "FINAL_EMIT count=$finalEmitCount text=$text")
-                            Log.d("ASR", "final=$text")
+                            Log.d("ASR", "ASR_FINAL_EMIT count=$finalEmitCount text=$text")
                             listener.onAsrResult(text, true)
                             // 清空 lastPartial
                             lastPartial = ""
