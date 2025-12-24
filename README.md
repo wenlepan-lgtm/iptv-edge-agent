@@ -4,9 +4,11 @@
 
 ## 核心功能
 
-- **离线语音识别 (ASR)**：基于 sherpa-onnx 框架实现，完全不依赖云端，保护用户隐私。
-- **离线语音合成 (TTS)**：基于 Piper TTS 引擎实现，支持本地化语音播报。
-- **3D 数字人交互 (DUIX)**：集成 DUIX SDK 实现 3D 数字人渲染与交互。
+- **离线语音识别 (ASR)**：基于 Vosk-Android 实现，完全不依赖云端，保护用户隐私。
+- **实时流式处理**：通过 FIFO 命名管道实时读取 `tinycap` 音频流，实现零延迟识别。
+- **多通道音频优化**：支持 8 通道麦克风阵列，可灵活切换声道并调整增益（Gain）。
+- **离线语音合成 (TTS)**：集成 sherpa-onnx-zh_CN-huayan 模型实现 TTS 功能。
+- **2D 数字人交互 (DUIX)**：集成 DUIX SDK 实现 2D 数字人渲染与交互。
 - **系统实时监控 (SYSTEM MONITOR)**：
   - **CPU**: 实时显示使用率、核心数及主频 (rk3576 8 Processor 2208MHz)。
   - **MEM**: 系统总内存占用。
@@ -23,19 +25,22 @@
 ## 技术细节
 
 - **语言**：Kotlin
-- **ASR 引擎**：sherpa-onnx (使用 `sherpa-onnx-whisper-...` 或其他具体模型)。
-- **TTS 引擎**：Piper TTS (通过 `com.k2fsa.sherpa.onnx.tts.engine` 包)。
+- **音频采集**：通过 Root 权限调用 `tinycap` 绕过系统音频框架限制。
+- **识别引擎**：Vosk (使用 `vosk-model-small-cn-0.22`)。
+- **TTS 引擎**：sherpa-onnx (使用 `sherpa-onnx-zh_CN-huayan` 模型)。
 - **数字人 SDK**：DUIX SDK。
+- **通信机制**：Linux FIFO (Named Pipe)。
 
 ## 快速开始
 
 1. **环境要求**：
-   - 已 Root 的 Android TV 或机顶盒。
+   - 已 Root 的 Android TV 设备。
+   - 终端支持 `tinycap` 命令。
    - 视频文件路径：`/sdcard/1.mp4`。
 
 2. **模型准备**：
-   - 下载 sherpa-onnx ASR 模型。
-   - 确保设备上已安装 Piper TTS 引擎。
+   - 下载 Vosk 中文模型并解压到设备 SD 卡：
+     - `/sdcard/vosk-model-small-cn-0.22/`
 
 3. **配置说明**：
    - 复制 `app/src/main/assets/config.properties.template` 为 `config.properties`。
@@ -50,7 +55,7 @@
 ## 最新改进 (v2.0.0 - 2025-01-01)
 
 ### 技术栈更新
-- **ASR 框架**：从 Vosk 迁移至 sherpa-onnx，提升识别性能与稳定性。
-- **TTS 引擎**：采用 Piper TTS 实现离线语音合成。
-- **数字人 SDK**：集成 DUIX SDK，实现 3D 数字人功能。
+- **ASR 框架**：采用 Vosk 框架，使用 `vosk-model-small-cn-0.22` 模型。
+- **TTS 引擎**：采用 sherpa-onnx 框架，使用 `zh_CN-huayan` 模型。
+- **数字人 SDK**：集成 DUIX SDK，实现 2D 数字人功能。
 - **文档更新**：同步更新 README.md 以反映当前技术架构。
