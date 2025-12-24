@@ -34,7 +34,7 @@
 ## 快速开始
 
 1. **环境要求**：
-   - 已 Root 的 Android TV 设备。
+   - 支持未Root 的 Android TV 设备。
    - 终端支持 `tinycap` 命令。
    - 视频文件路径：`/sdcard/1.mp4`。
 
@@ -52,7 +52,7 @@
    adb install app/build/outputs/apk/debug/app-debug.apk
    ```
 
-## 最新改进 (v2.0.0 - 2025-01-01)
+## 最新改进 (v2.0.0 - 2025-12-24)
 
 ### 技术栈更新
 - **ASR 框架**：采用 Vosk 框架，使用 `vosk-model-small-cn-0.22` 模型。
