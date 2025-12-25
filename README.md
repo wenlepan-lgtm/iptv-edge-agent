@@ -2,6 +2,10 @@
 
 运行在酒店 IPTV（SmartTV & STB）设备上的本地语音智能体系统。
 
+## 项目简介
+
+本项目是一个集成离线语音识别（ASR）、离线语音合成（TTS）和 2D 数字人交互功能的 Android TV 应用。它利用 Vosk、sherpa-onnx 等框架实现本地化智能语音交互，并通过 DUIX SDK 呈现数字人形象。
+
 ## 核心功能
 
 - **离线语音识别 (ASR)**：基于 Vosk-Android 实现，完全不依赖云端，保护用户隐私。
@@ -31,10 +35,10 @@
 - **数字人 SDK**：DUIX SDK。
 - **通信机制**：Linux FIFO (Named Pipe)。
 
-## 快速开始
+## 文件下载说明
 
 1. **环境要求**：
-   - 支持未Root 的 Android TV 设备。
+   - 已 Root 的 Android TV 设备。
    - 终端支持 `tinycap` 命令。
    - 视频文件路径：`/sdcard/1.mp4`。
 
@@ -52,10 +56,16 @@
    adb install app/build/outputs/apk/debug/app-debug.apk
    ```
 
-## 最新改进 (v2.0.0 - 2025-12-24)
+## 最新改进 (v2.0.0 - 2025-01-01)
 
 ### 技术栈更新
 - **ASR 框架**：采用 Vosk 框架，使用 `vosk-model-small-cn-0.22` 模型。
 - **TTS 引擎**：采用 sherpa-onnx 框架，使用 `zh_CN-huayan` 模型。
 - **数字人 SDK**：集成 DUIX SDK，实现 2D 数字人功能。
 - **文档更新**：同步更新 README.md 以反映当前技术架构。
+
+---
+
+## 联系方式
+
+如需获取更多信息，请联系：[wenlepan@gmail.com](mailto:wenlepan@gmail.com)
